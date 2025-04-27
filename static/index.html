@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <title>SSE Examples</title>
+</head>
+<body>
+<strong>Messages</strong>
+<br>
+<div id="messages"></div>
+
+<div>
+    <button id="channel">channel 1</button>
+    <button id="uid">uid</button>
+</div>
+
+<script type="text/javascript">
+    e1 = new EventSource('/sse/channel-1');
+    e1.onmessage = function (event) {
+        document.getElementById('messages').innerHTML = 'Message on channel-1: ' + event.data + '<br>';
+    };
+
+    e2 = new EventSource('/sse/uid');
+    e2.addEventListener('message', ev => {
+        console.log('message',ev.lastEventId, ev.data)
+    })
+    e2.addEventListener('ping', ev => {
+        console.log('ping',ev.lastEventId, ev.data)
+    })
+    e2.addEventListener('todo', ev => {
+        console.log('todo',ev.lastEventId, JSON.parse(ev.data))
+    })
+    e2.addEventListener('error', ev => {
+        // console.log(ev)
+        // e2.close()
+    })
+
+    document.getElementById("channel").addEventListener('click', () => {
+        e1.close()
+    })
+
+    document.getElementById("uid").addEventListener('click', () => {
+        e2.close()
+    })
+
+</script>
+</body>
+</html>

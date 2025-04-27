@@ -14,6 +14,8 @@ type Options struct {
 	// ChannelNameFunc allow to create custom channel names.
 	// Default channel name is the request path.
 	ChannelNameFunc func(*http.Request) string
+	// ClientIdFunc allow to create custom client ids.
+	ClientIdFunc func(*http.Request) string
 	// All usage logs end up in Logger
 	Logger *log.Logger
 }

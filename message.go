@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-// Message represents a event source message.
+// Message represents a name source message.
 type Message struct {
 	id,
 	data,
@@ -14,12 +14,12 @@ type Message struct {
 	retry int
 }
 
-// SimpleMessage creates a simple event source message.
+// SimpleMessage creates a simple name source message.
 func SimpleMessage(data string) *Message {
 	return NewMessage("", data, "")
 }
 
-// NewMessage creates an event source message.
+// NewMessage creates a name source message.
 func NewMessage(id, data, event string) *Message {
 	return &Message{
 		id,
@@ -27,6 +27,27 @@ func NewMessage(id, data, event string) *Message {
 		event,
 		0,
 	}
+}
+
+func (m *Message) GetId() string {
+	return m.id
+}
+
+func (m *Message) GetName() string {
+	return m.event
+}
+
+func (m *Message) GetData() string {
+	return m.data
+}
+
+func (m *Message) GetRetry() int {
+	return m.retry
+}
+
+func (m *Message) Prepare() []byte {
+	buffer := EventBuffer(m)
+	return buffer.Bytes()
 }
 
 // Buffer formats the message.

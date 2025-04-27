@@ -22,14 +22,18 @@ func newChannel(name string) *Channel {
 }
 
 // SendMessage broadcast a message to all clients in a channel.
+// Deprecated: use Channel.Publish instead.
 func (c *Channel) SendMessage(message *Message) {
 	c.lastEventID = message.id
+	c.Publish(message)
+}
 
+func (c *Channel) Publish(event Event) {
 	c.mu.RLock()
 
 	for c, open := range c.clients {
 		if open {
-			c.send <- message
+			c.eventChan <- event
 		}
 	}
 
@@ -61,6 +65,7 @@ func (c *Channel) LastEventID() string {
 func (c *Channel) addClient(client *Client) {
 	c.mu.Lock()
 	c.clients[client] = true
+	//c.lastEventID = client.LastEventID()
 	c.mu.Unlock()
 }
 
@@ -69,5 +74,5 @@ func (c *Channel) removeClient(client *Client) {
 	c.clients[client] = false
 	delete(c.clients, client)
 	c.mu.Unlock()
-	close(client.send)
+	client.Close()
 }

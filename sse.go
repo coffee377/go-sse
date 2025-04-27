@@ -1,11 +1,13 @@
 package sse
 
 import (
+	"github.com/google/uuid"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
 	"sync"
+	"time"
 )
 
 // Server represents a server sent events server.
@@ -47,73 +49,42 @@ func NewServer(options *Options) *Server {
 }
 
 func (s *Server) ServeHTTP(response http.ResponseWriter, request *http.Request) {
-	flusher, ok := response.(http.Flusher)
-
+	client, ok := s.clientConnect(request, response)
 	if !ok {
-		http.Error(response, "Streaming unsupported.", http.StatusInternalServerError)
 		return
 	}
 
-	h := response.Header()
+	s.setHeaders(request.Method, response)
 
-	if s.options.hasHeaders() {
-		for k, v := range s.options.Headers {
-			h.Set(k, v)
-		}
-	}
+	s.addClient <- client
 
-	if request.Method == "GET" {
-		h.Set("Content-Type", "text/event-stream")
-		h.Set("Cache-Control", "no-cache")
-		h.Set("Connection", "keep-alive")
-		h.Set("X-Accel-Buffering", "no")
-
-		var channelName string
-
-		if s.options.ChannelNameFunc == nil {
-			channelName = request.URL.Path
-		} else {
-			channelName = s.options.ChannelNameFunc(request)
-		}
-
-		lastEventID := request.Header.Get("Last-Event-ID")
-		c := newClient(lastEventID, channelName)
-		s.addClient <- c
-		closeNotify := request.Context().Done()
-
-		go func() {
-			<-closeNotify
-			s.removeClient <- c
-		}()
-
-		response.WriteHeader(http.StatusOK)
-		flusher.Flush()
-
-		for msg := range c.send {
-			msg.retry = s.options.RetryInterval
-			response.Write(msg.Bytes())
-			flusher.Flush()
-		}
-	} else if request.Method != "OPTIONS" {
-		response.WriteHeader(http.StatusMethodNotAllowed)
-	}
+	go client.server(15*time.Second, func() {
+		s.removeClient <- client
+	})
+	<-client.Done()
+	log.Printf("connection with client %v closed", client.Id())
 }
 
 // SendMessage broadcast a message to all clients in a channel.
 // If channelName is an empty string, it will broadcast the message to all channels.
+// Deprecated: use Server.PublishEvent instead.
 func (s *Server) SendMessage(channelName string, message *Message) {
+	s.Publish(channelName, message)
+}
+
+func (s *Server) Publish(channelName string, event Event) {
 	if len(channelName) == 0 {
 		s.options.Logger.Print("broadcasting message to all channels.")
 
 		s.mu.RLock()
 
 		for _, ch := range s.channels {
-			ch.SendMessage(message)
+			ch.Publish(event)
 		}
 
 		s.mu.RUnlock()
 	} else if ch, ok := s.getChannel(channelName); ok {
-		ch.SendMessage(message)
+		ch.Publish(event)
 		s.options.Logger.Printf("message sent to channel '%s'.", channelName)
 	} else {
 		s.options.Logger.Printf("message not sent because channel '%s' has no clients.", channelName)
@@ -159,7 +130,7 @@ func (s *Server) GetChannel(name string) (*Channel, bool) {
 
 // Channels returns a list of all channels to the server.
 func (s *Server) Channels() []string {
-	channels := []string{}
+	var channels []string
 
 	s.mu.RLock()
 
@@ -175,6 +146,46 @@ func (s *Server) Channels() []string {
 // CloseChannel closes a channel.
 func (s *Server) CloseChannel(name string) {
 	s.closeChannel <- name
+}
+
+func (s *Server) clientConnect(r *http.Request, w http.ResponseWriter) (*Client, bool) {
+	_, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "Streaming unsupported!", http.StatusInternalServerError)
+		return nil, false
+	}
+	channelName := r.URL.Path
+	clientId := uuid.New().String()
+	if s.options.ChannelNameFunc != nil {
+		channelName = s.options.ChannelNameFunc(r)
+	}
+	if s.options.ClientIdFunc != nil {
+		clientId = s.options.ClientIdFunc(r)
+	}
+	client := newClient(channelName, clientId, r, w)
+	return client, true
+}
+
+func (s *Server) setHeaders(httpMethod string, w http.ResponseWriter) {
+	h := w.Header()
+
+	if s.options.hasHeaders() {
+		for k, v := range s.options.Headers {
+			h.Set(k, v)
+		}
+	}
+
+	if httpMethod == "GET" {
+		h.Set("Content-Type", "text/event-stream")
+		h.Set("Cache-Control", "no-cache")
+		h.Set("Connection", "keep-alive")
+		h.Set("Transfer-Encoding", "chunked")
+		h.Set("X-Accel-Buffering", "no")
+
+		w.WriteHeader(http.StatusOK)
+	} else if httpMethod != "OPTIONS" {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
 }
 
 func (s *Server) addChannel(name string) *Channel {
@@ -210,6 +221,10 @@ func (s *Server) close() {
 	for _, ch := range s.channels {
 		s.removeChannel(ch)
 	}
+	close(s.addClient)
+	close(s.removeClient)
+	close(s.shutdown)
+	close(s.closeChannel)
 }
 
 func (s *Server) dispatch() {
@@ -252,11 +267,6 @@ func (s *Server) dispatch() {
 		// Event Source shutdown.
 		case <-s.shutdown:
 			s.close()
-			close(s.addClient)
-			close(s.removeClient)
-			close(s.closeChannel)
-			close(s.shutdown)
-
 			s.options.Logger.Print("server stopped.")
 			return
 		}
