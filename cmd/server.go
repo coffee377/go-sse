@@ -6,6 +6,7 @@ import (
 	"log"
 	"math/rand"
 	"net/http"
+	"os"
 	"strconv"
 	"time"
 )
@@ -109,6 +110,6 @@ func ss() error {
 		}
 	}()
 
-	log.Println("Listening at :3001")
+	log.Printf("Listening at :3001[%d]", os.Getpid())
 	return http.ListenAndServe(":3001", nil)
 }
